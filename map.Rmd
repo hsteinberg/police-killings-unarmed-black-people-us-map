@@ -121,7 +121,7 @@ map_data_by_month = map_data %>%
 
 ```
 
-```{r map}
+```{r map, eval = F}
 
 p = plot_usmap(regions = "states", data = test_date, values = "death_in_last_30", color = "white") +
   scale_fill_manual(values = c("#d8e2dc", "#1d3557"), name = "Police Killing of \nUnarmed Black Person\nin Last 30 Days")
@@ -153,6 +153,6 @@ p_month_animated = p_month + transition_time(year_month) +
 
 animate(p_month_animated, nframes = 108*4, fps = 30, renderer = gifski_renderer())
 
-anim_save("map_four_frame_per_month_5_30fps.gif")
+anim_save("map.gif")
 
 ```
