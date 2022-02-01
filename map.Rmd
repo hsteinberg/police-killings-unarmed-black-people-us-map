@@ -1,0 +1,158 @@
+---
+title: "police killings of unarmed black men"
+author: "Hannah Steinberg"
+date: "1/30/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(magrittr)
+library(readxl)
+library(lubridate)
+library(janitor)
+library(usmap)
+library(ggplot2)
+library(tigris)
+library(gganimate)
+#devtools::install_github("thomasp85/transformr")
+library(transformr)
+library(gifski)
+library(av)
+
+#data from https://mappingpoliceviolence.org/
+shootings = read_xlsx("MPVDatasetDownload.xlsx", sheet = 1) %>%
+  clean_names()
+
+```
+
+```{r data_cleaning}
+
+date1 = as.Date("2013-01-01")
+date2 = as.Date("2021-12-31")
+date_range = date1:date2 %>% as.Date(origin = "1970-01-01")
+
+states_fips = fips_codes %>%
+  select(state, state_code) %>%
+  unique() %>%
+  slice(1:51)
+
+map_data = shootings %>%
+  filter(victims_race == "Black",
+         armed_unarmed_status == "Unarmed/Did Not Have Actual Weapon",
+         date_of_incident_month_day_year < as.Date("2022-01-01")
+         ) %>%
+  mutate(date_of_incident = as.Date(date_of_incident_month_day_year)) %>%
+  select(date_of_incident, state) %>%
+#  mutate(thirty_days_after_incident = date_of_incident_month_day_year + days(30)) %>%
+  left_join(states_fips, by = "state") %>%
+  rename(fips = state_code)
+
+death_in_last_30_days = function(date, state_code){
+  dates = ((date-days(29)):date) %>% as_date(origin = "1970-01-01")
+  
+  state_deaths = map_data %>%
+    filter(state == state_code)
+  
+  #if any of the dates in the last 30 days correspond to a death, return 1, if not 0
+  if(length(intersect(state_deaths$date_of_incident, dates)) > 0){ 
+    return(1)
+  }else{
+    return(0)
+  }
+}
+
+map_data_by_date = expand.grid(date = as.Date("2013-01-01"):as.Date("2021-12-31"),
+                               state = states_fips$state
+                               ) %>%
+  mutate(date = as_date(date, origin = "1970-01-01")) %>%
+  rowwise() %>%
+  mutate(death_in_last_30 = death_in_last_30_days(date, state)) %>%
+  left_join(states_fips, by = "state") %>%
+  ungroup() %>%
+  mutate(death_in_last_30 = factor(death_in_last_30, levels = c(0,1), labels = c("No", "Yes"))) 
+
+# map_data_by_date2 = map_data %>%
+#   mutate(date = factor(date_of_incident, levels = as.character(date_range)),
+#          fips = factor(fips, levels = states_fips$state_code)
+#          ) %>%
+#   group_by(fips, date) %>%
+#   summarise() %>%
+#   mutate(death = 1) %>%
+#   ungroup() %>%
+#   complete(fips, date, fill = list(death = 0)) %>% 
+#   arrange(fips, date) %>%
+#   group_by(fips)
+
+test_date = map_data_by_date %>%
+  #filter(date == as.Date("2016-01-01")) %>%
+  #filter(date %in% c(as.Date("2016-01-01"), as.Date("2017-01-01"), as.Date("2018-01-01"))) %>%
+  rename(fips = state_code) %>%
+  select(fips, death_in_last_30, date) %>%
+  as.data.frame() 
+
+map_data_by_month = map_data %>%
+  mutate(month = format(date_of_incident, "%b") %>% as.character(),
+         year = format(date_of_incident, "%Y") %>% as.character(),
+         month = factor(month, levels = c("Jan", "Feb", "Mar", "Apr",
+                                          "May", "Jun", "Jul", "Aug",
+                                          "Sep", "Oct", "Nov", "Dec"
+                                          )),
+         year = factor(year),
+         fips = factor(fips, levels = states_fips$state_code)
+         ) %>%
+  group_by(fips, year, month) %>%
+  summarise() %>%
+  mutate(death = 1) %>%
+  ungroup() %>%
+  complete(fips, year, month, fill = list(death = 0)) %>%
+  arrange(fips, year, month) %>%
+  mutate(year_month = paste(month, 1, year),
+         year_month = as_date(year_month, format = "%b %d %Y")
+         ) %>%
+  group_by(year, month) %>%
+  mutate(group = cur_group_id(),
+         death = factor(death, levels = c(0,1), labels = c("No", "Yes"))
+         ) %>%
+  ungroup() %>%
+  relocate(death, .after = fips)
+
+```
+
+```{r map}
+
+p = plot_usmap(regions = "states", data = test_date, values = "death_in_last_30", color = "white") +
+  scale_fill_manual(values = c("#d8e2dc", "#1d3557"), name = "Police Killing of \nUnarmed Black Person\nin Last 30 Days")
+
+p_animated = p + transition_time(date) +
+  labs(title = "Date: {frame_time}")
+
+animate(p_animated, renderer = av_renderer())
+
+
+anim_save("map.mp4")
+
+#Won't render with so many days- switch to months, see below
+
+```
+
+```{r map_month}
+
+map_month_input = (map_data_by_month) %>% 
+  select(fips, death, year_month)
+
+p_month = plot_usmap(regions = "states", data = map_month_input, values = "death", color = "white") +
+  scale_fill_manual(values = c("#d8e2dc", "#1d3557"), name = "Police Killing of \nUnarmed Black Person\nDuring Given Month")
+
+p_month_animated = p_month + transition_time(year_month) +
+  labs(title = "Date: {frame_time}",
+       caption = "Source: mappingpoliceviolence.org",
+       subtitle = "Bor et al (2018) describe an increase in poor mental health days in\nBlack Americans in the 30 days following a police killing of an unarmed\nBlack person in their state of residence. These killings are common and\ncreate a culture of hypervigilance for Black Americans.")
+
+animate(p_month_animated, nframes = 108*4, fps = 30, renderer = gifski_renderer())
+
+anim_save("map_four_frame_per_month_5_30fps.gif")
+
+```
